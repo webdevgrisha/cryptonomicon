@@ -9,7 +9,8 @@
           <div class="mt-1 relative rounded-md shadow-md">
             <input
               v-model="ticker"
-              v-on:keyup.enter="add"
+              v-on:keyup.enter="add(ticker)"
+              v-on:input="showTokenOptions"
               type="text"
               name="wallet"
               id="wallet"
@@ -22,15 +23,18 @@
           >
             <span
               class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer"
+              v-for="token in tokenOptions"
+              :key="token"
+              @:click="add(token)"
             >
-              BTC
+              {{ token }}
             </span>
           </div>
-          <div class="text-sm text-red-600">Такой тикер уже добавлен</div>
+          <div class="text-sm text-red-600">{{ validationMessage }}</div>
         </div>
       </div>
       <button
-        @:click="add"
+        @:click="add(this.ticker)"
         type="button"
         class="my-4 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
       >
@@ -146,40 +150,113 @@ export default {
       tickers: [],
       selectedPair: null,
       graphData: [],
+      tokenCollection: [],
+      tokenOptions: [],
+      tokenOptionMaxCount: 4,
+      validationMessage: "",
     };
   },
 
-  methods: {
-    add() {
-      let currentTicker = {
-        name: this.ticker,
-        price: "000.000",
-      };
+  created() {
+    const tickersData = localStorage.getItem("cryptonomicon-list");
 
-      this.tickers.push(currentTicker);
+    if (tickersData) {
+      this.tickers = JSON.parse(tickersData);
+      this.tickers.forEach((ticker) => {
+        this.subscribeToUpdates(ticker.name);
+      });
+    }
+  },
+
+  mounted() {
+    setTimeout(async () => {
+      const f = await fetch(
+        "https://min-api.cryptocompare.com/data/all/coinlist?summary=true"
+      );
+
+      const cryptoData = await f.json();
+      this.tokenCollection = Object.keys(cryptoData.Data);
+    }, 0);
+  },
+  methods: {
+    subscribeToUpdates(tickerName) {
       setInterval(async () => {
         const f = await fetch(
-          `https://min-api.cryptocompare.com/data/price?fsym=${currentTicker.name}&tsyms=USD&api_key=f367739066d414bcdef6f271ee320fa07645b83e070d0ab7d860f16bd176e5d2`
+          `https://min-api.cryptocompare.com/data/price?fsym=${tickerName}&tsyms=USD&api_key=f367739066d414bcdef6f271ee320fa07645b83e070d0ab7d860f16bd176e5d2`
         );
         const data = await f.json();
 
-        this.tickers.find((t) => t.name == currentTicker.name).price =
+        this.tickers.find((t) => t.name == tickerName).price =
           data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
-        console.log(currentTicker);
+        console.log(tickerName);
 
-        if (this.selectedPair?.name === currentTicker.name) {
+        if (this.selectedPair?.name === tickerName.name) {
           this.graphData.push(data.USD);
         }
       }, 3000);
-
-      this.ticker = "";
     },
+    add(tickerToAdd) {
+      let currentTicker = {
+        name: tickerToAdd.toUpperCase(),
+        price: "000.000",
+      };
 
+      if (this.tickerValidation(currentTicker)) {
+        this.tickers.push(currentTicker);
+
+        localStorage.setItem(
+          "cryptonomicon-list",
+          JSON.stringify(this.tickers)
+        );
+
+        this.subscribeToUpdates(currentTicker.name);
+
+        this.ticker = "";
+        this.tokenOptions = [];
+      }
+    },
+    tickerValidation(ticker) {
+      let tickerName = ticker.name;
+
+      if (tickerName.trim() === "") {
+        this.validationMessage = "Введиете заначение ";
+        return false;
+      }
+
+      if (this.tickers.find((ticker) => ticker.name === tickerName)) {
+        this.validationMessage = "Такой тикер уже добавлен";
+        return false;
+      }
+
+      let token = this.tokenCollection.find((tokenName) =>
+        tokenName.includes(tickerName)
+      );
+
+      if (!token) {
+        this.validationMessage = "Такого тикера не существует";
+        return false;
+      } else {
+        return true;
+      }
+    },
+    showTokenOptions() {
+      this.validationMessage = "";
+      this.tokenOptions = [];
+      let inputText = this.ticker.toUpperCase();
+
+      for (let i = 0; i < this.tokenCollection.length; i++) {
+        let currentToken = this.tokenCollection[i];
+        if (this.tokenOptions.length >= this.tokenOptionMaxCount) break;
+
+        if (currentToken.includes(inputText)) {
+          this.tokenOptions.push(currentToken);
+        }
+      }
+    },
     select(ticker) {
       this.selectedPair = ticker;
       this.graphData.length = 0;
     },
-
     normalizeGraph() {
       const maxValue = Math.max(...this.graphData);
       const minValue = Math.min(...this.graphData);
@@ -187,7 +264,6 @@ export default {
         (price) => 5 + ((price - minValue) * 95) / (maxValue - minValue)
       );
     },
-
     deleteTicker(ticker) {
       let tickerIndex = this.tickers.findIndex((item) => item === ticker);
       this.tickers.splice(tickerIndex, 1);
